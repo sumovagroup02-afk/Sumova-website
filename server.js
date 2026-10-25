@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { UPLOAD_DIR, one, run, getSettings } from './src/db.js';
 import { seedIfEmpty } from './src/seed.js';
@@ -15,8 +16,28 @@ export const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY : false);
 
+// Content-Security-Policy: own origin only; inline scripts need the per-request nonce.
+// Google Analytics hosts are allowed only while GA4 is set in the dashboard, and never in /admin.
+// style-src keeps 'unsafe-inline' because templates use style="" attributes (CSS custom properties).
+export function cspHeader(req, nonce) {
+  const ga = !req.path.startsWith('/admin') && !!getSettings().analytics?.ga4;
+  const G = ga ? ' https://*.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com' : '';
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'${ga ? ' https://www.googletagmanager.com' : ''}`,
+    "style-src 'self' 'unsafe-inline'",
+    `img-src 'self' data:${G}`,
+    `connect-src 'self'${G}`,
+    "font-src 'self'",
+    "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'self'",
+    ...(process.env.COOKIE_SECURE === '1' ? ['upgrade-insecure-requests'] : []),
+  ].join('; ');
+}
+
 // security headers
 app.use((req, res, next) => {
+  res.locals.nonce = crypto.randomBytes(16).toString('base64');
+  res.setHeader('Content-Security-Policy', cspHeader(req, res.locals.nonce));
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');

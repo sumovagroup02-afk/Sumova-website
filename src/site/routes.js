@@ -213,7 +213,7 @@ export function siteRouter(lang) {
     const body = html`<div class="notice"><h2 style="margin:0 0 .3em;font-size:1.6rem">${c.ui.thanks}</h2>
       <p>${c.ui.thanksText}: <strong style="font:600 1.6rem var(--f-num);letter-spacing:.08em" dir="ltr">${code}</strong></p><p>${c.ui.thanksNext}</p>
       <p><a class="btn btn--ink" href="${c.L('/track')}">${c.ui.track}</a> <a class="btn btn--line" style="color:var(--ink)" href="${c.L('/')}">${c.ui.toHome}</a></p></div>
-      <script>try{localStorage.removeItem('sumova_cart')}catch(e){}</script>`;
+      <script nonce="${res.locals.nonce}">try{localStorage.removeItem('sumova_cart')}catch(e){}</script>`;
     res.type('html').send(pageShell(c, c.ui.thanks, body, '/request-quote'));
   }];
   r.post('/request', ...submit(null));

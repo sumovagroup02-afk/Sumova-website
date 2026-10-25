@@ -156,3 +156,9 @@ dialog.picker::backdrop{background:rgba(5,20,39,.6)}
   .grid{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+/* two-step verification */
+.qr{display:grid;place-items:start;margin:6px 0}.qr svg{width:220px;height:220px;max-width:100%;border:1px solid var(--line);border-radius:12px;background:#fff}
+.steps2fa{margin:0;padding-inline-start:1.3em;display:grid;gap:6px}
+.rcodes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin:16px 0;padding-inline-start:1.6em;font:600 1.05rem var(--f-num)}
+.login__box .qr svg{width:200px;height:200px}
+.login__box form.inline{margin-top:4px}

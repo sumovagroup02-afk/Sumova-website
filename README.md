@@ -23,11 +23,14 @@ npm test            # اختبارات شاملة (HTTP + متصفح)  — تح�
 | `COOKIE_SECURE=1` | فعّله خلف HTTPS (يضيف Secure وHSTS) |
 | `TRUST_PROXY=1` | فعّله خلف Nginx/Cloudflare ليُقرأ IP الزائر الحقيقي (للحد من الإساءة) |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | المالك الأول |
+| `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | التخزين الدائم على Cloudflare R2 (قاعدة البيانات عبر Litestream + الملفات + النسخ اليومية) |
+| `RESTORE_BACKUP` | تاريخ نسخة تُستعاد مرة واحدة عند التشغيل (مثل `2026-10-25`) |
 
 ## النشر
-- استضف الخادم **داخل المملكة** (البيانات الشخصية للعملاء: أسماء وجوالات). ضعه خلف Nginx/Cloudflare مع HTTPS.
-- Docker: `docker build -t sumova . && docker run -d -p 3000:3000 -v sumova-data:/data -e COOKIE_SECURE=1 -e TRUST_PROXY=1 -e ADMIN_PASSWORD=… sumova`
-- النسخ الاحتياطي: انسخ `DATA_DIR` كاملًا (أو استعمل `sqlite3 sumova.db ".backup"` + مجلد uploads/private).
+- الاستضافة المعتمدة: **Cloudflare Containers** خلف Worker، والبيانات محفوظة في R2. الخطوات كاملة (الحساب، الأسرار، سجلات DNS، البريد، المراقبة، الاستعادة) في **[DEPLOY.md](DEPLOY.md)**.
+- النشر تلقائي من GitHub Actions بعد نجاح `npm test` (`.github/workflows/deploy.yml`).
+- Docker محليًا: `docker build -t sumova . && docker run -d -p 3000:3000 -v sumova-data:/data -e ADMIN_PASSWORD=… sumova` (بدون `R2_*` يعمل كما هو على القرص).
+- النسخ الاحتياطي: `node ops/data.mjs backup | list | restore <date|latest> <dir>` (انظر DEPLOY.md).
 
 ## الربط (n8n وغيره)
 - الإعدادات ← رابط Webhook: يصل حدث JSON موقّع (`x-sumova-signature` = HMAC-SHA256 للجسم) عند: `request.created` · `request.quoted` · `request.decision` · `request.status`.

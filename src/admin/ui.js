@@ -36,7 +36,7 @@ export function shell(req, res, { title, body, active, wide = false, head = '' }
 <aside class="side"><a class="side__logo" href="/admin"><img src="/brand/logo-ar-onink.svg" alt="سوموفا" width="150" height="42"></a>
   <nav aria-label="القائمة الرئيسية">${nav.map((n) => html`<a href="${n.href}" ${raw((n.exact ? active === n.href : active?.startsWith(n.href)) ? 'aria-current="page"' : '')}><span aria-hidden="true">${n.icon}</span>${n.label}${n.badge ? html`<b class="badge" data-badge ${raw(unseen ? '' : 'hidden')}>${unseen}</b>` : ''}</a>`)}</nav>
   <div class="side__foot"><div class="who"><b>${u.name}</b><small>${ROLES[u.role]?.label}</small></div>
-    <a href="/" target="_blank" rel="noopener">عرض الموقع ↗</a><a href="/admin/account">حسابي</a>
+    <a href="/" target="_blank" rel="noopener">عرض الموقع ↗</a><a href="/admin/account">حسابي</a><a href="/admin/account/sessions">جلساتي</a>
     <form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${req.csrf}"><button class="linkbtn plain">تسجيل الخروج</button></form></div></aside>
 <main id="main" class="main ${wide ? 'wide' : ''}">
   ${f ? html`<div class="toast ${f.type}" role="status">${f.msg}</div>` : ''}

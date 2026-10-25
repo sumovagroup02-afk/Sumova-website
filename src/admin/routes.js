@@ -12,6 +12,8 @@ import { shell, flash, csrf, fld, i18n, readI18n, check, select, fmtDate, pageHe
 import { contentRouter } from './content.js';
 import { requestsRouter } from './requests.js';
 import { seoRouter } from './seo.js';
+import { securityRouter, stageGate } from './security.js';
+import { MFA_ROLES, disableTotp, recoveryLeft } from '../totp.js';
 import { STATUS } from '../site/render.js';
 
 export const adminRouter = express.Router();
@@ -37,10 +39,10 @@ const loginPage = (res, { token, error = '', email = '' }) => res.type('html').s
 </form></main></body></html>`.toString());
 
 adminRouter.get('/login', (req, res) => {
-  if (req.user) return res.redirect('/admin');
+  if (req.user && req.stage === 'ok') return res.redirect('/admin');
   const token = rand(18);
   setCookie(res, 'lt', token, { maxAge: 30 * 60 * 1000, path: '/admin' });
-  loginPage(res, { token });
+  loginPage(res, { token, error: req.query.e === '2fa' ? 'محاولات كثيرة لرمز التحقق. سجّل الدخول من جديد.' : '' });
 });
 adminRouter.post('/login', (req, res) => {
   const b = req.body || {};
@@ -55,13 +57,17 @@ adminRouter.post('/login', (req, res) => {
   if (!u) verifyPassword('x', 'scrypt$00$00'); // keep timing similar
   if (!ok) { noteFail(key); audit(null, 'login_failed', 'user', null, email); return again('البريد الإلكتروني أو كلمة المرور غير صحيحة.'); }
   clearFails(key);
-  createSession(res, u, req);
   setCookie(res, 'lt', '', { maxAge: 0, path: '/admin' });
+  // password is only step one when 2FA is on (or must be set up for owner/admin)
+  if (u.totp_on) { createSession(res, u, req, 'mfa'); return res.redirect('/admin/login/2fa'); }
+  if (MFA_ROLES.includes(u.role)) { createSession(res, u, req, 'setup'); audit(u, 'login', 'user', u.id, 'قبل تفعيل التحقق بخطوتين'); return res.redirect('/admin/account/2fa'); }
+  createSession(res, u, req);
   audit(u, 'login', 'user', u.id);
   res.redirect('/admin');
 });
 
-adminRouter.use(requireLogin, csrfGuard);
+adminRouter.use(requireLogin, csrfGuard, stageGate);
+adminRouter.use('/', securityRouter);
 
 adminRouter.post('/logout', (req, res) => { audit(req.user, 'logout', 'user', req.user.id); destroySession(req, res); res.redirect('/admin/login'); });
 
@@ -131,6 +137,7 @@ adminRouter.get('/settings', requirePerm('settings'), (req, res) => {
     ${i18n('footer_about', 'نبذة أسفل الموقع', S.footer?.about, { area: true, rows: 3 })}</section>
   <section class="card" id="contact"><div class="card__h"><h2>بيانات التواصل</h2></div>
     <div class="cols">${fld('contact_phone', 'الجوال', ct.phone, { dir: 'ltr', type: 'tel' })}${fld('contact_email', 'البريد الإلكتروني', ct.email, { dir: 'ltr', type: 'email' })}</div>
+    ${fld('contact_whatsapp', 'رقم واتساب الأعمال', ct.whatsapp, { dir: 'ltr', type: 'tel', hint: 'يظهر زر واتساب في صفحة التواصل وزر عائم على الجوال. اتركه فارغًا لإخفائهما.' })}
     ${i18n('contact_address', 'العنوان', ct.address, { area: true, rows: 2 })}${fld('contact_map', 'رابط الموقع على الخريطة', ct.map_url, { dir: 'ltr', type: 'url', hint: 'يظهر في صفحة التواصل. استخدم رابطًا بالإحداثيات حتى لا يظهر اسم قديم للمكان في الخرائط.' })}${i18n('contact_hours', 'ساعات العمل', ct.hours)}</section>
   <section class="card" id="social"><div class="card__h"><h2>الحسابات الاجتماعية</h2></div><div class="cols">
     ${SOCIAL.map((k) => fld('social_' + k, k, so[k] || '', { dir: 'ltr', type: 'url', attrs: 'placeholder="https://"' }))}</div></section>
@@ -138,7 +145,8 @@ adminRouter.get('/settings', requirePerm('settings'), (req, res) => {
     <p class="hint">عند وصول طلب جديد أو قبول/رفض عرض يُرسل إشعار إلى هذه القنوات. فشل الإشعار لا يعطّل استلام الطلب.</p>
     ${fld('n_emails', 'بريد الموظفين (افصل بفاصلة)', nt.emails, { dir: 'ltr' })}
     <div class="cols">${fld('n_webhook_url', 'رابط Webhook (مثل n8n)', nt.webhook_url, { dir: 'ltr', type: 'url' })}${fld('n_webhook_secret', 'مفتاح توقيع Webhook (اختياري)', nt.webhook_secret, { dir: 'ltr' })}</div></section>
-  <section class="card" id="smtp"><div class="card__h"><h2>خادم البريد (SMTP)</h2></div><div class="cols">
+  <section class="card" id="smtp"><div class="card__h"><h2>خادم البريد (SMTP)</h2></div>
+    <p class="hint">بريد الشركة على Zoho Mail: الخادم <code dir="ltr">smtppro.zoho.com</code>، المنفذ <code dir="ltr">465</code> مع «اتصال مشفّر مباشر» (أو <code dir="ltr">587</code> بدونه). إن كان التحقق بخطوتين مفعّلًا في Zoho فاستخدم «كلمة مرور خاصة بالتطبيق» من إعدادات حساب Zoho. لا يُرسل البريد قبل حفظ كلمة المرور.</p><div class="cols">
     ${fld('smtp_host', 'الخادم', sm.host, { dir: 'ltr' })}${fld('smtp_port', 'المنفذ', sm.port || '587', { dir: 'ltr' })}
     ${fld('smtp_user', 'المستخدم', sm.user, { dir: 'ltr' })}${fld('smtp_pass', 'كلمة المرور', sm.pass ? '••••••••' : '', { type: 'password', dir: 'ltr', hint: sm.pass ? 'اتركها كما هي للإبقاء على الحالية.' : '' })}
     ${fld('smtp_from', 'عنوان المرسل', sm.from, { dir: 'ltr' })}<div class="f"><span class="lbl">الاتصال</span>${check('smtp_secure', 'اتصال مشفّر مباشر (SSL، منفذ 465)', sm.secure)}</div></div></section>
@@ -151,7 +159,7 @@ adminRouter.post('/settings', requirePerm('settings'), (req, res) => {
   const url = (k) => { const v = t(k, 400); return /^https?:\/\//i.test(v) ? v : ''; };
   setSetting('brand', { ...(S.brand || {}), name: readI18n(b, 'brand_name', 80), cr: t('brand_cr', 30) });
   setSetting('footer', { ...(S.footer || {}), about: readI18n(b, 'footer_about', 600) });
-  setSetting('contact', { ...(S.contact || {}), phone: t('contact_phone', 30), email: /^[^@\s]+@[^@\s]+$/.test(t('contact_email')) ? t('contact_email') : '', address: readI18n(b, 'contact_address', 300), hours: readI18n(b, 'contact_hours', 200), map_url: url('contact_map'), geo: (() => { const g = /(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/.exec(url('contact_map')); return g ? { lat: Number(g[1]), lng: Number(g[2]) } : null; })() });
+  setSetting('contact', { ...(S.contact || {}), phone: t('contact_phone', 30), whatsapp: 'contact_whatsapp' in b ? t('contact_whatsapp', 30) : S.contact?.whatsapp || '', email: /^[^@\s]+@[^@\s]+$/.test(t('contact_email')) ? t('contact_email') : '', address: readI18n(b, 'contact_address', 300), hours: readI18n(b, 'contact_hours', 200), map_url: url('contact_map'), geo: (() => { const g = /(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/.exec(url('contact_map')); return g ? { lat: Number(g[1]), lng: Number(g[2]) } : null; })() });
   setSetting('social', Object.fromEntries(SOCIAL.map((k) => [k, url('social_' + k)]).filter(([, v]) => v)));
   setSetting('notifications', { emails: t('n_emails', 400), webhook_url: url('n_webhook_url'), webhook_secret: t('n_webhook_secret', 120) });
   const pass = t('smtp_pass', 200);
@@ -175,7 +183,10 @@ adminRouter.get('/account', (req, res) => {
     <div class="f"><span class="lbl">البريد</span><b dir="ltr">${me.email}</b></div><div class="f"><span class="lbl">الصلاحية</span><b>${ROLES[me.role]?.label}</b></div>
     <hr>${fld('current', 'كلمة المرور الحالية (لتغييرها فقط)', '', { type: 'password', dir: 'ltr', attrs: 'autocomplete="current-password"' })}
     ${fld('next', 'كلمة المرور الجديدة', '', { type: 'password', dir: 'ltr', hint: '10 أحرف على الأقل.', attrs: 'autocomplete="new-password" minlength="10"' })}
-    <button class="btn btn--ink">حفظ</button></form>` });
+    <button class="btn btn--ink">حفظ</button></form>
+  <section class="card narrow"><div class="card__h"><h2>الأمان</h2></div><ul class="plain">
+    <li><a href="/admin/account/2fa">التحقق بخطوتين</a>: ${me.totp_on ? html`<b>مفعّل</b> (رموز استرداد متبقية: ${recoveryLeft(me.id)})` : html`<b>غير مفعّل</b>${MFA_ROLES.includes(me.role) ? ' – إلزامي لصلاحيتك' : ''}`}</li>
+    <li><a href="/admin/account/sessions">جلساتي</a>: الأجهزة المسجّل دخولها وإنهاؤها</li></ul></section>` });
 });
 adminRouter.post('/account', (req, res) => {
   const me = one('SELECT * FROM users WHERE id=?', req.user.id), b = req.body;
@@ -197,8 +208,8 @@ adminRouter.post('/account', (req, res) => {
 adminRouter.get('/users', requirePerm('users'), (req, res) => {
   const rows = all('SELECT * FROM users ORDER BY id');
   shell(req, res, { title: 'المستخدمون', active: '/admin/users', body: html`${pageHead('المستخدمون')}
-  <table class="tbl"><thead><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th><th>الحالة</th><th>آخر دخول</th><th></th></tr></thead><tbody>
-  ${rows.map((u) => html`<tr><td>${u.name}</td><td dir="ltr">${u.email}</td><td>${ROLES[u.role]?.label}</td><td>${u.active ? 'نشط' : 'موقوف'}</td><td>${fmtDate(u.last_login) || '—'}</td><td><a href="/admin/users/${u.id}">تعديل</a></td></tr>`)}</tbody></table>
+  <table class="tbl"><thead><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th><th>الحالة</th><th>التحقق بخطوتين</th><th>آخر دخول</th><th></th></tr></thead><tbody>
+  ${rows.map((u) => html`<tr><td>${u.name}</td><td dir="ltr">${u.email}</td><td>${ROLES[u.role]?.label}</td><td>${u.active ? 'نشط' : 'موقوف'}</td><td>${u.totp_on ? 'مفعّل' : MFA_ROLES.includes(u.role) ? 'لم يُفعَّل (إلزامي)' : '—'}</td><td>${fmtDate(u.last_login) || '—'}</td><td><a href="/admin/users/${u.id}">تعديل</a></td></tr>`)}</tbody></table>
   <section class="card narrow"><div class="card__h"><h2>إضافة مستخدم</h2></div><form method="post" action="/admin/users" class="stack">${csrf(req)}
     ${fld('name', 'الاسم', '', { req: true })}${fld('email', 'البريد الإلكتروني', '', { req: true, type: 'email', dir: 'ltr' })}
     ${fld('password', 'كلمة مرور مؤقتة', '', { req: true, type: 'password', dir: 'ltr', hint: '10 أحرف على الأقل. يغيّرها المستخدم من «حسابي».', attrs: 'minlength="10" autocomplete="new-password"' })}
@@ -224,7 +235,21 @@ adminRouter.get('/users/:id(\\d+)', requirePerm('users'), (req, res) => {
     ${self ? html`<div class="f"><span class="lbl">الصلاحية</span><b>${ROLES[u.role]?.label}</b><small>لا يمكنك تغيير صلاحية حسابك.</small></div>` : select('role', 'الصلاحية', Object.entries(ROLES).map(([k, v]) => [k, v.label]), u.role)}
     ${self ? '' : check('active', 'الحساب نشط', u.active)}
     ${fld('password', 'كلمة مرور جديدة (اتركها فارغة لعدم التغيير)', '', { type: 'password', dir: 'ltr', attrs: 'minlength="10" autocomplete="new-password"' })}
-    <button class="btn btn--ink">حفظ</button> <a href="/admin/users">رجوع</a></form>` });
+    <button class="btn btn--ink">حفظ</button> <a href="/admin/users">رجوع</a></form>
+  <section class="card narrow"><div class="card__h"><h2>التحقق بخطوتين</h2></div>
+    <p>${u.totp_on ? 'مفعّل.' : 'غير مفعّل.'}${MFA_ROLES.includes(u.role) ? ' إلزامي لهذه الصلاحية.' : ''}</p>
+    ${u.totp_on && !self ? html`<form method="post" action="/admin/users/${u.id}/reset-2fa">${csrf(req)}<p class="hint">استخدمها إذا فقد المستخدم جواله ورموز الاسترداد. تُنهى جلساته، ويُطلب منه إعداد التحقق من جديد${MFA_ROLES.includes(u.role) ? ' عند دخوله التالي' : ''}.</p>
+      <button class="linkbtn bad" data-confirm="إعادة ضبط التحقق بخطوتين لهذا المستخدم؟">إعادة ضبط التحقق بخطوتين</button></form>` : ''}
+    ${u.totp_on && self ? html`<p class="hint">لا يمكنك إعادة ضبط تحققك بنفسك. يديره كل مستخدم من «حسابي».</p>` : ''}</section>` });
+});
+adminRouter.post('/users/:id(\\d+)/reset-2fa', requirePerm('users'), (req, res) => {
+  const u = one('SELECT * FROM users WHERE id=?', req.params.id);
+  if (!u || u.id === req.user.id) return res.redirect('/admin/users');
+  disableTotp(u.id);
+  run('DELETE FROM sessions WHERE user_id=?', u.id);
+  audit(req.user, '2fa_reset', 'user', u.id, u.email);
+  flash(res, 'ok', 'أُعيد ضبط التحقق بخطوتين وأُنهيت جلسات المستخدم.');
+  res.redirect('/admin/users/' + u.id);
 });
 adminRouter.post('/users/:id(\\d+)', requirePerm('users'), (req, res) => {
   const u = one('SELECT * FROM users WHERE id=?', req.params.id), b = req.body;
@@ -255,7 +280,7 @@ adminRouter.get('/integrations', requirePerm('integrations'), (req, res) => {
   shell(req, res, { title: 'الربط والـ API', active: '/admin/integrations', body: html`${pageHead('الربط والـ API')}
   ${fresh ? html`<div class="notice"><b>انسخ المفتاح الآن، لن يظهر مرة أخرى:</b><br><code class="key" dir="ltr">${fresh}</code></div>` : ''}
   <section class="card"><div class="card__h"><h2>مفاتيح API</h2></div>
-  ${keys.length ? html`<table class="tbl"><thead><tr><th>الاسم</th><th>أُنشئ</th><th>آخر استخدام</th><th></th></tr></thead><tbody>${keys.map((k) => html`<tr><td>${k.name}</td><td>${fmtDate(k.created_at)}</td><td>${fmtDate(k.last_used) || '—'}</td><td><form method="post" action="/admin/integrations/${k.id}/revoke" onsubmit="return confirm('إلغاء هذا المفتاح نهائيًا؟')">${csrf(req)}<button class="linkbtn bad">إلغاء</button></form></td></tr>`)}</tbody></table>` : html`<p class="empty">لا توجد مفاتيح.</p>`}
+  ${keys.length ? html`<table class="tbl"><thead><tr><th>الاسم</th><th>أُنشئ</th><th>آخر استخدام</th><th></th></tr></thead><tbody>${keys.map((k) => html`<tr><td>${k.name}</td><td>${fmtDate(k.created_at)}</td><td>${fmtDate(k.last_used) || '—'}</td><td><form method="post" action="/admin/integrations/${k.id}/revoke">${csrf(req)}<button class="linkbtn bad" data-confirm="إلغاء هذا المفتاح نهائيًا؟">إلغاء</button></form></td></tr>`)}</tbody></table>` : html`<p class="empty">لا توجد مفاتيح.</p>`}
   <form method="post" action="/admin/integrations" class="inline">${csrf(req)}<input name="name" placeholder="اسم المفتاح (مثل n8n)" required maxlength="60" aria-label="اسم المفتاح"><button class="btn-s">إنشاء مفتاح</button></form></section>
   <section class="card"><div class="card__h"><h2>كيف تستخدمه</h2></div>
   <p>أرسل المفتاح في الترويسة <code dir="ltr">Authorization: Bearer …</code></p>

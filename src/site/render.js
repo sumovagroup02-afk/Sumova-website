@@ -6,7 +6,7 @@ export const UI = {
   ar: {
     menu: 'القائمة', skip: 'تخطَّ إلى المحتوى', quote: 'اطلب عرض سعر', home: 'الرئيسية', more: 'اعرف أكثر',
     lang: 'EN', langName: 'English', rights: 'جميع الحقوق محفوظة', links: 'روابط', contact: 'تواصل معنا', cr: 'السجل التجاري',
-    phone: 'الهاتف', email: 'البريد الإلكتروني', address: 'العنوان', hours: 'ساعات العمل', follow: 'تابعنا',
+    phone: 'الهاتف', email: 'البريد الإلكتروني', address: 'العنوان', hours: 'ساعات العمل', follow: 'تابعنا', whatsapp: 'واتساب', waChat: 'راسلنا على واتساب',
     name: 'الاسم', org: 'الجهة أو الشركة', mobile: 'رقم الجوال', message: 'تفاصيل الطلب', send: 'إرسال الطلب', sendMsg: 'إرسال الرسالة',
     kindQuote: 'عرض سعر', kindCatering: 'إعاشة', people: 'عدد الأشخاص', days: 'عدد الأيام', place: 'موقع التقديم', date: 'تاريخ البدء',
     msgContact: 'رسالتك', onMap: 'افتح الموقع على الخريطة', chooseFiles: 'اختر الملفات', noFiles: 'لم تُختر ملفات', afterTitle: 'بعد إرسال الطلب', after: ['يصلك رقم الطلب فورًا لتتابعه من صفحة «متابعة طلب».', 'يدرس فريقنا الطلب ويرفع عرض السعر بصيغة PDF.', 'تقبل العرض أو ترفضه من الصفحة نفسها.'], callUs: 'تفضّل الاتصال؟', files: 'ملفات مرفقة (اختياري)', filesHint: 'PDF أو صور أو Excel أو Word، حتى 8 ميجابايت لكل ملف.',
@@ -20,7 +20,7 @@ export const UI = {
   en: {
     menu: 'Menu', skip: 'Skip to content', quote: 'Request a quote', home: 'Home', more: 'Learn more',
     lang: 'ع', langName: 'العربية', rights: 'All rights reserved', links: 'Links', contact: 'Contact us', cr: 'Commercial Registration',
-    phone: 'Phone', email: 'Email', address: 'Address', hours: 'Working hours', follow: 'Follow us',
+    phone: 'Phone', email: 'Email', address: 'Address', hours: 'Working hours', follow: 'Follow us', whatsapp: 'WhatsApp', waChat: 'Chat on WhatsApp',
     name: 'Name', org: 'Company or organisation', mobile: 'Mobile number', message: 'Request details', send: 'Send request', sendMsg: 'Send message',
     kindQuote: 'Quotation', kindCatering: 'Catering', people: 'Number of people', days: 'Number of days', place: 'Service location', date: 'Start date',
     msgContact: 'Your message', onMap: 'Open on the map', chooseFiles: 'Choose files', noFiles: 'No files chosen', afterTitle: 'After you send', after: ['You get a request number at once to follow it on the tracking page.', 'Our team reviews it and posts a PDF quotation.', 'You accept or decline from the same page.'], callUs: 'Prefer to call?', files: 'Attachments (optional)', filesHint: 'PDF, images, Excel or Word, up to 8 MB each.',
@@ -58,6 +58,9 @@ const paras = (text) => String(text || '').split(/\n\s*\n/).map((s) => s.trim())
 const lines = (text) => String(text || '').split(/\n/).map((s) => s.trim()).filter(Boolean);
 const P = (text) => paras(text).map((p) => html`<p>${p}</p>`);
 const href = (c, url) => (!url ? '#' : /^(https?:|mailto:|tel:|#)/.test(url) ? url : c.L(url));
+// Saudi mobile → wa.me link (05xxxxxxxx / 5xxxxxxxx / 9665xxxxxxxx)
+export const waUrl = (phone) => { const d = String(phone || '').replace(/\D/g, ''); const n = d.startsWith('0') ? '966' + d.slice(1) : d.length === 9 ? '966' + d : d; return n.length >= 11 ? `https://wa.me/${n}` : ''; };
+const WA_ICON = raw('<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1.3-3.9A8.5 8.5 0 1 1 8.2 19z"/><path d="M9.2 8.6c-.3 2.9 2.3 5.9 5.6 6.2l1.1-1.4-1.9-1-.9.8a4 4 0 0 1-2.4-2.4l.8-.9-1-1.9z"/></svg>');
 
 // ───────── blocks
 const R = {};
@@ -220,6 +223,7 @@ R.contact = (c, d, x) => {
     <div><h2>${c.t(d.title)}</h2>${c.t(d.intro) ? html`<p class="lede">${c.t(d.intro)}</p>` : ''}
       <dl>
         ${ct.phone ? html`<dt>${c.ui.phone}</dt><dd><a href="tel:${ct.phone.replace(/\s/g, '')}" dir="ltr">${ct.phone}</a></dd>` : ''}
+        ${waUrl(ct.whatsapp) ? html`<dt>${c.ui.whatsapp}</dt><dd><a class="btn btn--ink btn--wa" href="${waUrl(ct.whatsapp)}" target="_blank" rel="noopener" data-wa>${WA_ICON}<span>${c.ui.waChat}</span></a></dd>` : ''}
         ${ct.email ? html`<dt>${c.ui.email}</dt><dd><a href="mailto:${ct.email}" dir="ltr">${ct.email}</a></dd>` : ''}
         ${c.t(ct.address) ? html`<dt>${c.ui.address}</dt><dd>${c.t(ct.address)}${/^https:\/\//.test(ct.map_url || '') ? html`<br><a href="${ct.map_url}" target="_blank" rel="noopener">${c.ui.onMap} ↗</a>` : ''}</dd>` : ''}
         ${c.t(ct.hours) ? html`<dt>${c.ui.hours}</dt><dd>${c.t(ct.hours)}</dd>` : ''}
@@ -310,7 +314,7 @@ ${an.bing ? html`<meta name="msvalidate.01" content="${an.bing}">` : ''}
 <link rel="preload" href="/fonts/tajawal-arabic-800-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/site.css?v=${raw(process.env.ASSET_V || '1')}">
 ${lds.map((o) => html`<script type="application/ld+json">${jsonForScript(o)}</script>`)}
-${an.ga4 ? html`<script async src="https://www.googletagmanager.com/gtag/js?id=${an.ga4}"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','${an.ga4}');</script>` : ''}
+${an.ga4 ? html`<script async src="https://www.googletagmanager.com/gtag/js?id=${an.ga4}" nonce="${c.req.res.locals.nonce}"></script><script nonce="${c.req.res.locals.nonce}">window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','${an.ga4}');</script>` : ''}
 </head>
 <body>
 <a class="skip" href="#main">${c.ui.skip}</a>
@@ -323,6 +327,7 @@ ${an.ga4 ? html`<script async src="https://www.googletagmanager.com/gtag/js?id=$
     <a class="btn btn--gold" href="${c.L('/request-quote')}">${c.ui.quote}</a>
   </div></div></header>
 <main id="main">${body}</main>
+${waUrl(ct.whatsapp) ? html`<a class="wa-fab" href="${waUrl(ct.whatsapp)}" target="_blank" rel="noopener" aria-label="${c.ui.waChat}" title="${c.ui.waChat}" data-wa-fab>${WA_ICON}</a>` : ''}
 <footer class="ftr on-ink"><div class="wrap">
   <div class="ftr__grid">
     <div><img src="/brand/logo-${c.lang === 'ar' ? 'ar' : 'en'}-onink.svg" alt="${c.t(S.brand?.name)}" width="173" height="48">${c.t(S.footer?.about) ? html`<p>${c.t(S.footer.about)}</p>` : ''}</div>

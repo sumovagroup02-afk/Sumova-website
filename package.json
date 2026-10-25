@@ -20,12 +20,15 @@
     "@fontsource/ibm-plex-sans-arabic": "^5.3.0",
     "@fontsource/jost": "^5.3.0",
     "@fontsource/tajawal": "^5.3.0",
+    "aws4fetch": "1.0.20",
     "express": "^4.22.3",
     "multer": "^1.4.4",
     "nodemailer": "^10.2.1",
+    "qrcode-generator": "1.4.4",
     "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "axe-core": "^4.14.0"
+    "axe-core": "^4.14.0",
+    "playwright": "1.64.1"
   }
 }

@@ -42,28 +42,40 @@ export function setCookie(res, name, value, { maxAge, path = '/' } = {}) {
   res.append('Set-Cookie', c);
 }
 
-export function createSession(res, user, req) {
+// stage: 'ok' = fully signed in · 'mfa' = password accepted, code pending · 'setup' = must enrol 2FA first.
+// A partial session lives 15 minutes and reaches only the 2FA pages (see the gate in admin/routes.js).
+const PARTIAL_TTL = 1000 * 60 * 15;
+export function createSession(res, user, req, stage = 'ok') {
   const token = rand(32);
   const csrf = rand(24);
-  run('INSERT INTO sessions(token_hash,user_id,csrf,expires_at,ip,ua) VALUES(?,?,?,?,?,?)',
-    sha(token), user.id, csrf, Date.now() + SESSION_TTL, req.ip, String(req.headers['user-agent'] || '').slice(0, 200));
-  setCookie(res, 'sid', token, { maxAge: SESSION_TTL, path: '/admin' });
-  run("UPDATE users SET last_login=datetime('now') WHERE id=?", user.id);
+  const ttl = stage === 'ok' ? SESSION_TTL : PARTIAL_TTL;
+  run('INSERT INTO sessions(token_hash,user_id,csrf,expires_at,ip,ua,stage,created_at,last_seen) VALUES(?,?,?,?,?,?,?,?,?)',
+    sha(token), user.id, csrf, Date.now() + ttl, req.ip, String(req.headers['user-agent'] || '').slice(0, 200), stage, Date.now(), Date.now());
+  setCookie(res, 'sid', token, { maxAge: ttl, path: '/admin' });
+  if (stage === 'ok') run("UPDATE users SET last_login=datetime('now') WHERE id=?", user.id);
+  run('DELETE FROM sessions WHERE expires_at < ?', Date.now());
+  return { csrf, sid: one('SELECT rowid sid FROM sessions WHERE token_hash=?', sha(token)).sid };
 }
 export function destroySession(req, res) {
   const t = parseCookies(req).sid;
   if (t) run('DELETE FROM sessions WHERE token_hash=?', sha(t));
   setCookie(res, 'sid', '', { maxAge: 0, path: '/admin' });
 }
+// Replace the current session with a fresh token at a new stage (after a 2FA step)
+export function upgradeSession(req, res, user, stage = 'ok') {
+  destroySession(req, res);
+  return createSession(res, user, req, stage);
+}
 
-// Loads req.user / req.csrf if a valid session exists
+// Loads req.user / req.csrf / req.stage / req.sid if a valid session exists
 export function loadUser(req, _res, next) {
   const t = parseCookies(req).sid;
   if (t) {
-    const row = one(`SELECT s.csrf, s.expires_at, u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?`, sha(t));
+    const row = one(`SELECT s.rowid sid, s.csrf, s.expires_at, s.stage, s.last_seen, u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?`, sha(t));
     if (row && row.expires_at > Date.now() && row.active) {
-      req.user = { id: row.id, email: row.email, name: row.name, role: row.role };
-      req.csrf = row.csrf;
+      req.user = { id: row.id, email: row.email, name: row.name, role: row.role, totp_on: !!row.totp_on };
+      req.csrf = row.csrf; req.stage = row.stage; req.sid = row.sid;
+      if (!row.last_seen || Date.now() - row.last_seen > 60e3) run('UPDATE sessions SET last_seen=?, ip=? WHERE rowid=?', Date.now(), req.ip, row.sid);
     } else if (row) run('DELETE FROM sessions WHERE token_hash=?', sha(t));
   }
   next();

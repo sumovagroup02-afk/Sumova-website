@@ -1,4 +1,4 @@
-const { group, test, assert, eq, has, lacks, Client } = require('./lib.cjs');
+const { group, test, assert, eq, has, lacks, Client, totp, nextCode, recovery } = require('./lib.cjs');
 const { chromium } = require('playwright');
 
 const PAGES = ['/', '/factory', '/kitchen', '/cold-chain', '/catering', '/about', '/contact', '/request-quote', '/privacy', '/terms'];
@@ -57,6 +57,24 @@ module.exports = async (S) => {
   await test('security headers present', async () => {
     const r = await anon.get('/'); eq(r.headers.get('x-content-type-options'), 'nosniff'); eq(r.headers.get('x-frame-options'), 'SAMEORIGIN'); assert(r.headers.get('referrer-policy'));
     assert(!r.headers.get('x-powered-by'), 'x-powered-by leaked');
+  });
+  await test('Content-Security-Policy: self-only, per-request nonce, no unsafe-inline/eval for scripts, no GA while it is off', async () => {
+    const a = (await anon.get('/')).headers.get('content-security-policy'), b = (await anon.get('/')).headers.get('content-security-policy');
+    assert(a, 'CSP header'); has(a, "default-src 'self'"); has(a, "object-src 'none'"); has(a, "frame-ancestors 'self'"); has(a, "base-uri 'self'"); has(a, "form-action 'self'");
+    const script = /script-src ([^;]+)/.exec(a)[1]; lacks(script, 'unsafe-inline'); lacks(script, 'unsafe-eval'); has(script, "'nonce-");
+    assert(/'nonce-([^']+)'/.exec(a)[1] !== /'nonce-([^']+)'/.exec(b)[1], 'nonce must change per request');
+    lacks(a, 'google'); assert((await anon.get('/admin/login')).headers.get('content-security-policy'), 'CSP on admin');
+  });
+  await test('contact page: working hours (AR + EN) and WhatsApp business button', async () => {
+    const r = await anon.get('/contact'); has(r.text, 'الأحد – الخميس، 9:00 ص – 5:00 م'); has(r.text, 'href="https://wa.me/966557706254"'); has(r.text, 'راسلنا على واتساب');
+    const e = await anon.get('/en/contact'); has(e.text, 'Sunday – Thursday, 9:00 am – 5:00 pm'); has(e.text, 'Chat on WhatsApp');
+  });
+  await test('privacy policy: approved hosting text (Cloudflare), no claim that data stays inside the Kingdom', async () => {
+    const ar = await anon.get('/privacy'); has(ar.text, 'نستضيف الموقع وبياناته لدى مزوّد خدمات سحابية (Cloudflare)'); has(ar.text, 'نظام حماية البيانات الشخصية ولوائحه'); lacks(ar.text, 'تُحفظ البيانات على خوادم داخل المملكة');
+    const en = await anon.get('/en/privacy'); has(en.text, 'with a cloud service provider (Cloudflare)'); lacks(en.text, 'Data is stored on servers inside Saudi Arabia');
+  });
+  await test('floating WhatsApp link is on every public page with an accessible name', async () => {
+    for (const p of PAGES) { const r = await anon.get(p); assert(/<a class="wa-fab" href="https:\/\/wa\.me\/966557706254" target="_blank" rel="noopener" aria-label="[^"]+"/.test(r.text), 'wa-fab on ' + p); }
   });
   await test('static media is immutable-cached; fonts served', async () => {
     const r = await anon.get('/'); const m = /src="(\/media\/[^"]+)"/.exec(r.text)[1];
@@ -143,6 +161,68 @@ module.exports = async (S) => {
     const r = await owner.post('/admin/login', { lt, email: 'owner@test.local', password: 'Test-Pass-12345' }); eq(r.status, 302);
     const sc = r.headers.getSetCookie().find((c) => c.startsWith('sid=')); has(sc, 'HttpOnly'); has(sc, 'SameSite=Lax'); has(sc, 'Path=/admin');
   });
+
+  group('Two-step verification · التحقق بخطوتين');
+  const OWNER = 'owner@test.local';
+  await test('test TOTP helper matches the RFC 6238 vector (T=59 → 287082)', async () => { eq(totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', 1), '287082'); });
+  await test('owner without 2FA is forced to set it up: dashboard pages redirect to enrolment, which shows a QR', async () => {
+    for (const p of ['/admin', '/admin/settings', '/admin/users', '/admin/account/sessions']) { const r = await owner.get(p); eq(r.status, 302, p); eq(r.loc, '/admin/account/2fa', p); }
+    const g = await owner.get('/admin/account/2fa'); eq(g.status, 200); has(g.text, '<svg'); has(g.text, 'data-secret'); has(g.text, 'إلزامي'); lacks(g.text, 'side__foot');
+  });
+  await test('wrong code is refused; the right one enables 2FA and shows 10 one-time recovery codes', async () => {
+    const g = await owner.get('/admin/account/2fa'); const t = /name="_csrf" value="([^"]+)"/.exec(g.text)[1];
+    const bad = await owner.post('/admin/account/2fa/enable', { _csrf: t, code: '000000' }); eq(bad.loc, '/admin/account/2fa?e=1');
+    const r = await owner.enrol(OWNER); eq(r.status, 200); eq(recovery.get(OWNER).length, 10); eq(new Set(recovery.get(OWNER)).size, 10);
+    eq((await owner.get('/admin')).status, 200);
+  });
+  let usedCode;
+  await test('login now needs the code; the half-signed-in session cannot reach any dashboard page', async () => {
+    const c = new Client(base); const r = await c.login(OWNER, 'Test-Pass-12345'); eq(r.loc, '/admin/login/2fa');
+    for (const p of ['/admin', '/admin/requests', '/admin/account', '/admin/account/2fa']) eq((await c.get(p)).loc, '/admin/login/2fa', p);
+    usedCode = await nextCode(OWNER); const ok = await c.enterCode(OWNER, usedCode); eq(ok.loc, '/admin'); eq((await c.get('/admin')).status, 200);
+  });
+  await test('a code that was already used cannot be replayed', async () => {
+    const c = new Client(base); await c.login(OWNER, 'Test-Pass-12345'); eq((await c.enterCode(OWNER, usedCode)).status, 401);
+  });
+  await test('a recovery code signs in once only', async () => {
+    const code = recovery.get(OWNER)[0];
+    const c1 = new Client(base); await c1.login(OWNER, 'Test-Pass-12345'); eq((await c1.enterCode(OWNER, code.toUpperCase())).loc, '/admin');
+    const c2 = new Client(base); await c2.login(OWNER, 'Test-Pass-12345'); eq((await c2.enterCode(OWNER, code)).status, 401);
+    has((await owner.get('/admin/account/2fa')).text, 'data-rc-left>9<');
+  });
+  await test('5 wrong codes end the half-signed-in session', async () => {
+    const c = new Client(base); c.rotate(); await c.login(OWNER, 'Test-Pass-12345'); let r;
+    for (let i = 0; i < 5; i++) r = await c.enterCode(OWNER, '11111' + i);
+    eq(r.loc, '/admin/login?e=2fa'); eq((await c.get('/admin')).loc, '/admin/login');
+  });
+  await test('owner/admin cannot switch 2FA off; regenerating recovery codes needs a valid app code', async () => {
+    const t = await owner.csrf('/admin/account/2fa');
+    await owner.post('/admin/account/2fa/disable', { _csrf: t, password: 'Test-Pass-12345', code: '123456' }); // refused by role before the code is checked
+    has((await owner.get('/admin/account/2fa')).text, 'data-2fa-on');
+    eq((await owner.post('/admin/account/2fa/codes', { _csrf: t, code: '123456' })).loc, '/admin/account/2fa');
+    const r = await owner.post('/admin/account/2fa/codes', { _csrf: t, code: await nextCode(OWNER) }); eq(r.status, 200);
+    const fresh = [...r.text.matchAll(/<li><code>([a-z0-9]{5}-[a-z0-9]{5})<\/code><\/li>/g)].map((m) => m[1]); eq(fresh.length, 10);
+    const c = new Client(base); await c.login(OWNER, 'Test-Pass-12345'); eq((await c.enterCode(OWNER, recovery.get(OWNER)[1])).status, 401, 'old codes revoked');
+    recovery.set(OWNER, fresh);
+  });
+
+  group('My sessions · جلساتي');
+  await test('«جلساتي» lists this device; ending another session signs that device out', async () => {
+    const other = new Client(base); other.rotate(); await other.fullLogin(OWNER, 'Test-Pass-12345'); eq((await other.get('/admin')).status, 200);
+    const page = await owner.get('/admin/account/sessions'); eq(page.status, 200); has(page.text, 'هذا الجهاز');
+    const cur = /<tr data-current>[\s\S]*?\/admin\/account\/sessions\/(\d+)\/end/.exec(page.text)[1];
+    const ids = [...page.text.matchAll(/\/admin\/account\/sessions\/(\d+)\/end/g)].map((m) => m[1]); assert(ids.length >= 2, 'two sessions listed');
+    const t = await owner.csrf('/admin/account/sessions');
+    for (const id of ids.filter((x) => x !== cur)) await owner.post(`/admin/account/sessions/${id}/end`, { _csrf: t });
+    eq((await other.get('/admin')).loc, '/admin/login'); eq((await owner.get('/admin')).status, 200);
+  });
+  await test('«end all other sessions» keeps only the current one', async () => {
+    const a = new Client(base), b = new Client(base); a.rotate(); b.rotate(); await a.fullLogin(OWNER, 'Test-Pass-12345'); await b.fullLogin(OWNER, 'Test-Pass-12345');
+    await owner.post('/admin/account/sessions/end-others', { _csrf: await owner.csrf() });
+    eq((await a.get('/admin')).status, 302); eq((await b.get('/admin')).status, 302); eq((await owner.get('/admin')).status, 200);
+  });
+
+  group('Admin pages · لوحة التحكم');
   let csrf;
   await test('every admin page renders 200 for the owner', async () => {
     csrf = await owner.csrf();
@@ -150,6 +230,11 @@ module.exports = async (S) => {
       const r = await owner.get(p); eq(r.status, 200, p); lacks(r.text, 'undefined'); lacks(r.text, '[object Object]');
     }
     for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) { const r = await owner.get('/admin/pages/' + id); eq(r.status, 200, 'page ' + id); lacks(r.text, '[object Object]'); }
+  });
+  await test('SMTP defaults are Zoho (custom domain): smtppro.zoho.com:465 SSL as info@sumova.org, no password stored', async () => {
+    const r = await owner.get('/admin/settings');
+    has(r.text, 'name="smtp_host" type="text" value="smtppro.zoho.com"'); has(r.text, 'name="smtp_port" type="text" value="465"'); has(r.text, 'name="smtp_user" type="text" value="info@sumova.org"');
+    assert(/name="smtp_secure" value="1"\s+checked/.test(r.text), 'SSL on'); has(r.text, 'name="smtp_pass" type="password" value=""');
   });
   await test('admin pages are noindex + no-store', async () => { const r = await owner.get('/admin'); has(r.text, 'noindex'); has(r.headers.get('cache-control'), 'no-store'); });
   await test('CSRF: state-changing POST without token is rejected', async () => {
@@ -194,6 +279,20 @@ module.exports = async (S) => {
   });
   await test('last active owner cannot be demoted or deactivated', async () => {
     const r = await owner.get('/admin/users/1'); has(r.text, 'لا يمكنك تغيير صلاحية حسابك');
+  });
+  await test('2FA is optional for an editor; the owner can reset it (sessions end, next login skips the code)', async () => {
+    const E = 'editor@test.local'; eq((await editor.get('/admin/account/2fa')).status, 200);
+    eq((await editor.enrol(E)).status, 200);
+    const c = new Client(base); eq((await c.login(E, 'Role-Pass-123456')).loc, '/admin/login/2fa');
+    const list = await owner.get('/admin/users'); const id = [...list.text.matchAll(/editor@test\.local[\s\S]*?href="\/admin\/users\/(\d+)"/g)][0][1];
+    has((await owner.get('/admin/users/' + id)).text, 'إعادة ضبط التحقق بخطوتين');
+    eq((await owner.post(`/admin/users/${id}/reset-2fa`, { _csrf: csrf })).status, 302);
+    eq((await editor.get('/admin/pages')).loc, '/admin/login');
+    eq((await editor.login(E, 'Role-Pass-123456')).loc, '/admin');
+  });
+  await test('owner cannot reset their own 2FA from the users page', async () => {
+    lacks((await owner.get('/admin/users/1')).text, 'reset-2fa');
+    await owner.post('/admin/users/1/reset-2fa', { _csrf: csrf }); has((await owner.get('/admin/account/2fa')).text, 'data-2fa-on');
   });
 
   group('Requests pipeline · مسار الطلبات');

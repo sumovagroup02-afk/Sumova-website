@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const sharp = require('sharp');
 const { chromium } = require('playwright');
-const { group, test, assert, eq, has, lacks, Client } = require('./lib.cjs');
+const { group, test, assert, eq, has, lacks, Client, nextCode } = require('./lib.cjs');
 
 const SHOTS = path.resolve(__dirname, 'shots'); fs.mkdirSync(SHOTS, { recursive: true });
 const PAGES = ['/', '/factory', '/kitchen', '/cold-chain', '/catering', '/about', '/contact', '/request-quote', '/privacy', '/terms', '/en', '/en/factory'];
@@ -22,13 +22,17 @@ module.exports = async (S) => {
   const openAll = (p) => p.evaluate(() => document.querySelectorAll('details').forEach((d) => (d.open = true)));
   const go = (p) => pg.goto(base + p, { waitUntil: 'networkidle' });
   const setVal = async (sel, v) => { const l = pg.locator(sel).first(); await l.scrollIntoViewIfNeeded(); await l.fill(v); };
+  // real login form; the owner has 2FA on (enrolled in the HTTP suite), so the code page follows
+  const uiLogin = async (p, email, pw) => {
+    await p.goto(base + '/admin/login'); await p.fill('#email', email); await p.fill('#password', pw);
+    await Promise.all([p.waitForNavigation(), p.click('button[type=submit]')]);
+    if (new URL(p.url()).pathname === '/admin/login/2fa') { await p.fill('#code', await nextCode(email)); await Promise.all([p.waitForNavigation(), p.click('button[type=submit]')]); }
+  };
   const save = async () => { await Promise.all([pg.waitForNavigation({ waitUntil: 'networkidle' }), pg.locator('button.btn--ink', { hasText: 'حفظ' }).first().click()]); };
 
   group('Browser · لوحة التحكم عبر المتصفح');
-  await test('login through the real form, land on overview', async () => {
-    await go('/admin/login');
-    await pg.fill('#email', 'owner@test.local'); await pg.fill('#password', 'Test-Pass-12345');
-    await Promise.all([pg.waitForNavigation(), pg.click('button[type=submit]')]);
+  await test('login through the real form + 2FA code, land on overview', async () => {
+    await uiLogin(pg, 'owner@test.local', 'Test-Pass-12345');
     eq(new URL(pg.url()).pathname, '/admin'); has(await pg.textContent('h1'), 'أهلًا');
     await pg.screenshot({ path: path.join(SHOTS, 'admin-overview.png'), fullPage: true });
   });
@@ -177,6 +181,14 @@ module.exports = async (S) => {
     await Promise.all([pg.waitForNavigation(), pg.click('#redirects button.btn-s')]);
     const r = await fetch(base + '/old-brochure', { redirect: 'manual' }); eq(r.status, 301);
   });
+  await test('CSP: Google Analytics allowed only once GA4 is set; GA scripts carry the page nonce; never in /admin', async () => {
+    const before = (await fetch(base + '/')).headers.get('content-security-policy'); lacks(before, 'googletagmanager');
+    await go('/admin/seo#global'); await pg.fill('[name=ga4]', 'G-ABCD1234EF'); await Promise.all([pg.waitForNavigation(), pg.click('#global button.btn--ink')]);
+    const r = await fetch(base + '/'); const csp = r.headers.get('content-security-policy'), body = await r.text();
+    has(csp, 'https://www.googletagmanager.com'); const nonce = /'nonce-([^']+)'/.exec(csp)[1];
+    for (const m of body.matchAll(/<script(?![^>]*(application\/ld\+json|src="\/))[^>]*>/g)) has(m[0], `nonce="${nonce}"`, 'script without nonce');
+    lacks((await fetch(base + '/admin/login')).headers.get('content-security-policy'), 'googletagmanager');
+  });
   await test('global SEO: site URL drives canonical + sitemap; GA4 id injected; bad values refused', async () => {
     await go('/admin/seo#global'); await pg.fill('[name=site_url]', 'https://www.example-sumova.sa'); await pg.fill('[name=ga4]', 'G-ABCD1234EF'); await pg.fill('[name=search_console]', 'abcdefghijklmnop');
     await Promise.all([pg.waitForNavigation(), pg.click('#global button.btn--ink')]);
@@ -224,6 +236,15 @@ module.exports = async (S) => {
     await go('/contact'); const t = await pg.textContent('main'); has(t, '0551112222'); has(t, 'الرياض – حي الصناعية'); has(t, 'الأحد – الخميس');
     has(await pg.innerHTML('footer'), 'aria-label="LinkedIn"'); has(await pg.content(), 'linkedin.com/company/sumova');
   });
+  await test('settings: WhatsApp number drives the contact button and the floating button; empty hides both', async () => {
+    await go('/admin/settings'); eq(await pg.inputValue('[name=contact_whatsapp]'), '0557706254');
+    await pg.fill('[name=contact_whatsapp]', '');
+    await Promise.all([pg.waitForNavigation(), pg.click('.savebar button')]);
+    await go('/contact'); eq(await pg.locator('[data-wa], [data-wa-fab]').count(), 0);
+    await go('/admin/settings'); await pg.fill('[name=contact_whatsapp]', '0557706254');
+    await Promise.all([pg.waitForNavigation(), pg.click('.savebar button')]);
+    await go('/contact'); eq(await pg.getAttribute('[data-wa]', 'href'), 'https://wa.me/966557706254');
+  });
   await test('settings: javascript: social URLs are dropped', async () => {
     await go('/admin/settings'); await pg.fill('[name=social_X]', 'javascript:alert(1)');
     await Promise.all([pg.waitForNavigation(), pg.click('.savebar button')]); eq(await pg.inputValue('[name=social_X]'), '');
@@ -264,6 +285,15 @@ module.exports = async (S) => {
     const small = await p2.evaluate(() => [...document.querySelectorAll('.btn, [data-menu], header a')].filter((e) => e.offsetParent).map((e) => ({ t: e.textContent.trim().slice(0, 20), h: e.getBoundingClientRect().height })).filter((x) => x.h < 40));
     assert(small.length === 0, 'small targets: ' + JSON.stringify(small.slice(0, 4))); await c2.close();
   });
+  await test('WhatsApp floating button: visible ≥44px on mobile and not covering the footer; hidden on desktop', async () => {
+    const c2 = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ar-SA', isMobile: true, hasTouch: true }); const p2 = await c2.newPage(); await p2.goto(base + '/');
+    const fab = p2.locator('[data-wa-fab]'); assert(await fab.isVisible(), 'fab visible on mobile');
+    const b = await fab.boundingBox(); assert(b.width >= 44 && b.height >= 44, 'fab size ' + JSON.stringify(b));
+    await p2.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    const hit = await p2.evaluate(() => { const r = document.querySelector('[data-wa-fab]').getBoundingClientRect(); return [...document.querySelectorAll('.ftr__base span')].some((s) => { const q = s.getBoundingClientRect(); return q.bottom > r.top && q.top < r.bottom && q.right > r.left && q.left < r.right; }); });
+    assert(!hit, 'fab covers footer text'); await c2.close();
+    await go('/'); assert(!(await pg.locator('[data-wa-fab]').isVisible()), 'fab hidden on desktop');
+  });
   await test('strips accordion: keyboard focus opens a strip; one open at a time', async () => {
     await go('/'); const n = await pg.locator('.strip').count(); assert(n >= 3, 'strips'); await pg.locator('.strip__toggle').nth(2).focus();
     eq(await pg.locator('.strip.is-active').count(), 1); assert((await pg.locator('.strip').nth(2).getAttribute('class')).includes('is-active'), 'third active');
@@ -284,10 +314,12 @@ module.exports = async (S) => {
     assert(!bad.length, bad.join('\n      '));
   });
   await test('axe-core: dashboard pages (login, requests, editor)', async () => {
-    const c = new Client(base); c.rotate(); await go('/admin/login');
+    await go('/admin/login'); await pg.evaluate(AXE); const lr = await pg.evaluate(() => axe.run(document, { resultTypes: ['violations'] }));
+    const bad = lr.violations.filter((v) => ['serious', 'critical'].includes(v.impact)).map((v) => `/admin/login: ${v.id}`);
     await pg.fill('#email', 'owner@test.local'); await pg.fill('#password', 'New-Pass-1234567'); await Promise.all([pg.waitForNavigation(), pg.click('button[type=submit]')]);
-    const bad = [];
-    for (const u of ['/admin', '/admin/requests', '/admin/pages/1', '/admin/media', '/admin/seo', '/admin/settings']) {
+    await pg.evaluate(AXE); for (const v of (await pg.evaluate(() => axe.run(document, { resultTypes: ['violations'] }))).violations.filter((v) => ['serious', 'critical'].includes(v.impact))) bad.push(`/admin/login/2fa: ${v.id}`);
+    await pg.fill('#code', await nextCode('owner@test.local')); await Promise.all([pg.waitForNavigation(), pg.click('button[type=submit]')]);
+    for (const u of ['/admin', '/admin/requests', '/admin/pages/1', '/admin/media', '/admin/seo', '/admin/settings', '/admin/account', '/admin/account/2fa', '/admin/account/sessions', '/admin/users/1']) {
       await go(u); await openAll(pg); await pg.evaluate(AXE); const r = await pg.evaluate(() => axe.run(document, { resultTypes: ['violations'] }));
       for (const v of r.violations.filter((v) => ['serious', 'critical'].includes(v.impact))) bad.push(`${u}: ${v.id} (${v.nodes.length}) ${v.nodes[0].target.join(' ')}`);
     }
@@ -295,8 +327,8 @@ module.exports = async (S) => {
   });
   await test('dashboard is usable at 390px (no horizontal overflow)', async () => {
     const c2 = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ar-SA' }); const p2 = await c2.newPage();
-    await p2.goto(base + '/admin/login'); await p2.fill('#email', 'owner@test.local'); await p2.fill('#password', 'New-Pass-1234567'); await Promise.all([p2.waitForNavigation(), p2.click('button[type=submit]')]);
-    for (const u of ['/admin', '/admin/requests', '/admin/pages', '/admin/pages/1', '/admin/media', '/admin/settings']) { await p2.goto(base + u, { waitUntil: 'networkidle' }); const o = await p2.evaluate(() => document.documentElement.scrollWidth - innerWidth); assert(o <= 1, `${u} overflow ${o}px`); }
+    await uiLogin(p2, 'owner@test.local', 'New-Pass-1234567');
+    for (const u of ['/admin', '/admin/requests', '/admin/pages', '/admin/pages/1', '/admin/media', '/admin/settings', '/admin/account/2fa', '/admin/account/sessions']) { await p2.goto(base + u, { waitUntil: 'networkidle' }); const o = await p2.evaluate(() => document.documentElement.scrollWidth - innerWidth); assert(o <= 1, `${u} overflow ${o}px`); }
     await p2.screenshot({ path: path.join(SHOTS, 'admin-mobile.png') }); await c2.close();
   });
 

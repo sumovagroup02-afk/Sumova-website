@@ -248,6 +248,16 @@ p{margin:0 0 1em;max-width:68ch}
 .contact{display:grid;grid-template-columns:.8fr 1.2fr;gap:clamp(28px,6vw,80px)}
 .contact dl{margin:24px 0 0}.contact dt{font:700 .95rem var(--f-head);color:var(--gold-deep)}.contact dd{margin:0 0 18px;font-size:1.15rem}
 @media (max-width:860px){.contact{grid-template-columns:1fr}}
+.contact dd .btn--wa{font-size:1rem;margin-top:4px}
+/* WhatsApp: floating button on phones only */
+.wa-fab{display:none}
+@media (max-width:820px){
+  .wa-fab{display:grid;place-items:center;position:fixed;z-index:40;bottom:calc(16px + env(safe-area-inset-bottom,0px));inset-inline-end:16px;width:56px;height:56px;border-radius:50%;background:var(--ink);color:var(--gold);border:1.5px solid var(--gold);box-shadow:0 6px 20px rgba(5,20,39,.28);text-decoration:none}
+  .wa-fab svg{width:26px;height:26px}
+  .wa-fab:focus-visible{outline-color:var(--gold-deep)}
+  .ftr__base{padding-bottom:72px}
+}
+@media print{.wa-fab{display:none}}
 
 /* footer */
 .ftr{background:var(--ink);color:var(--stone);padding-block:clamp(48px,7vw,80px) 28px;border-top:1px solid rgba(198,169,116,.35)}

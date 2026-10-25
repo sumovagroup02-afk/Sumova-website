@@ -9,6 +9,7 @@ import { requirePerm, guardAfterUpload } from '../auth.js';
 import { notify } from '../notify.js';
 import { STATUS } from '../site/render.js';
 import { shell, flash, csrf, fmtDate, pageHead, select } from './ui.js';
+import { workbook } from '../xlsx.js';
 
 export const requestsRouter = express.Router();
 requestsRouter.use(requirePerm('requests'));
@@ -34,6 +35,8 @@ requestsRouter.get('/', (req, res) => {
   <form class="inline" method="get">${status ? html`<input type="hidden" name="status" value="${status}">` : ''}
     <select name="kind" aria-label="النوع"><option value="">كل الأنواع</option>${Object.entries(KIND).map(([k, v]) => html`<option value="${k}" ${kind === k ? 'selected' : ''}>${v}</option>`)}</select>
     <input name="q" value="${qq}" placeholder="رقم الطلب أو الاسم أو الجوال" aria-label="بحث"><button class="btn-s">بحث</button></form>
+  <form class="inline" method="get" action="/admin/requests/report.xlsx" data-report><span>تقرير Excel (الطلبات بالشهر، نسبة القبول، متوسط زمن إرسال العرض):</span>
+    <label>من <input type="month" name="from"></label><label>إلى <input type="month" name="to"></label><button class="btn-s">تنزيل التقرير</button><small>اتركهما فارغين لكل الفترات.</small></form>
   ${rows.length ? html`<table class="tbl"><thead><tr><th>الرقم</th><th>النوع</th><th>العميل</th><th>الجوال</th><th>الحالة</th><th>المسؤول</th><th>التاريخ</th></tr></thead><tbody>
   ${rows.map((r) => html`<tr class="${r.seen_at ? '' : 'unseen'}"><td><a href="/admin/requests/${r.id}" dir="ltr"><b>${r.code}</b></a></td><td>${KIND[r.kind]}</td><td>${r.name}${r.org ? html`<small> – ${r.org}</small>` : ''}</td><td dir="ltr">${r.phone}</td><td><span class="pill s-${r.status}">${STATUS[r.status]?.ar}</span></td><td>${r.aname || '—'}</td><td>${fmtDate(r.created_at)}</td></tr>`)}</tbody></table>`
     : html`<p class="empty">${qq || status || kind ? 'لا توجد طلبات مطابقة.' : 'لم يصل أي طلب بعد. عند وصول أول طلب سيظهر هنا وتصلك رسالة إن فعّلت الإشعارات.'}</p>`}` });
@@ -53,6 +56,57 @@ requestsRouter.get('/export.csv', (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="sumova-requests.csv"');
   res.send('﻿' + lines.join('\r\n'));
+});
+
+// ───────── Excel report: per month (Riyadh time) — requests, acceptance rate, average time to send the quote.
+// Contact-form messages are not quote requests and are left out.
+//   accepted  = customer accepted (or staff moved it to accepted/confirmed)
+//   rejected  = customer declined (or staff moved it to rejected)
+//   rate      = accepted ÷ (accepted + rejected) — quotes still awaiting a decision do not count against it
+//   time      = quote_sent_at − created_at, in hours, over requests that have a quote (latest upload)
+export function requestReport({ from = '', to = '' } = {}) {
+  const ym = /^\d{4}-\d{2}$/;
+  const where = ["kind<>'contact'"], args = [];
+  if (ym.test(from)) { where.push("strftime('%Y-%m', created_at, '+3 hours') >= ?"); args.push(from); }
+  if (ym.test(to)) { where.push("strftime('%Y-%m', created_at, '+3 hours') <= ?"); args.push(to); }
+  // IFNULL: a NULL decision must count as "no decision", not make the whole expression NULL
+  const ACC = "(IFNULL(decision,'')='accept' OR status IN ('accepted','confirmed'))", REJ = `(NOT ${ACC} AND (IFNULL(decision,'')='reject' OR status='rejected'))`;
+  const cols = `COUNT(*) n, SUM(kind='quote') q, SUM(kind='catering') c, SUM(quote_sent_at IS NOT NULL) sent,
+    SUM(${ACC}) acc, SUM(${REJ}) rej, SUM(quote_sent_at IS NOT NULL AND NOT ${ACC} AND NOT ${REJ}) pend,
+    AVG(CASE WHEN quote_sent_at IS NOT NULL THEN (julianday(quote_sent_at) - julianday(created_at)) * 24 END) hrs`;
+  const W = 'WHERE ' + where.join(' AND ');
+  const months = all(`SELECT strftime('%Y-%m', created_at, '+3 hours') m, ${cols} FROM requests ${W} GROUP BY m ORDER BY m`, ...args);
+  const total = one(`SELECT ${cols} FROM requests ${W}`, ...args);
+  const rate = (r) => (r.acc + r.rej ? r.acc / (r.acc + r.rej) : null);
+  const hrs = (h) => (h == null ? null : Math.round(h * 10) / 10);
+  return { months: months.map((r) => ({ ...r, rate: rate(r), hrs: hrs(r.hrs) })), total: { ...total, n: total.n || 0, rate: rate(total), hrs: hrs(total.hrs) } };
+}
+
+requestsRouter.get('/report.xlsx', (req, res) => {
+  const from = String(req.query.from || ''), to = String(req.query.to || '');
+  const { months, total: t } = requestReport({ from, to });
+  const period = from || to ? `${from || 'البداية'} ← ${to || 'اليوم'}` : 'كل الفترات';
+  const head = ['الشهر', 'الطلبات', 'عرض سعر', 'إعاشة', 'أُرسل العرض', 'قُبل', 'رُفض', 'بانتظار قرار العميل', 'نسبة القبول', 'متوسط زمن إرسال العرض (ساعة)'].map((v) => ({ v, s: 'head' }));
+  const row = (r, label, tot = false) => [{ v: label, s: tot ? 'totText' : 'text' }, ...[r.n, r.q, r.c, r.sent, r.acc, r.rej, r.pend].map((v) => ({ v: v || 0, s: tot ? 'totInt' : 'int' })),
+    { v: r.rate, s: tot ? 'totPct' : 'pct' }, { v: r.hrs, s: tot ? 'totDec' : 'dec' }];
+  const buf = workbook([
+    { name: 'ملخص', cols: [38, 22], rows: [
+      [{ v: 'تقرير طلبات عروض الأسعار – سوموفا', s: 'title' }], [],
+      [{ v: 'الفترة', s: 'head' }, { v: period, s: 'head' }],
+      ['تاريخ التقرير', fmtDate(new Date().toISOString().slice(0, 19).replace('T', ' '))],
+      ['إجمالي الطلبات', t.n], ['عروض أُرسلت', t.sent || 0], ['قُبلت', t.acc || 0], ['رُفضت', t.rej || 0], ['بانتظار قرار العميل', t.pend || 0],
+      ['نسبة القبول', { v: t.rate, s: 'pct' }], ['متوسط زمن إرسال العرض (ساعة)', { v: t.hrs, s: 'dec' }], ['متوسط زمن إرسال العرض (يوم)', { v: t.hrs == null ? null : Math.round(t.hrs / 2.4) / 10, s: 'dec' }], [],
+      [{ v: 'التعريفات', s: 'head' }, { v: '', s: 'head' }],
+      [{ v: 'الطلبات: طلبات عرض السعر والإعاشة (بدون رسائل نموذج التواصل)، والشهر حسب توقيت الرياض.', s: 'note' }],
+      [{ v: 'نسبة القبول = المقبولة ÷ (المقبولة + المرفوضة). العروض التي ما زالت بانتظار قرار العميل لا تُحسب.', s: 'note' }],
+      [{ v: 'زمن إرسال العرض = من وصول الطلب إلى رفع ملف العرض (آخر رفع إن أُعيد).', s: 'note' }],
+    ] },
+    { name: 'حسب الشهر', cols: [12, 10, 10, 10, 12, 9, 9, 16, 12, 22], rows: [head, ...months.map((r) => row(r, r.m)), ...(months.length ? [row(t, 'الإجمالي', true)] : [[{ v: 'لا توجد طلبات في هذه الفترة.', s: 'note' }]])] },
+  ]);
+  audit(req.user, 'export', 'requests_report', null, period);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="sumova-requests-report${from ? '-' + from.replace(/[^\d-]/g, '') : ''}${to ? '-to-' + to.replace(/[^\d-]/g, '') : ''}.xlsx"`);
+  res.send(buf);
 });
 
 requestsRouter.get('/:id(\\d+)', (req, res) => {

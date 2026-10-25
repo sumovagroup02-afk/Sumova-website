@@ -67,7 +67,23 @@ CREATE TABLE IF NOT EXISTS redirects(
 CREATE TABLE IF NOT EXISTS api_keys(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), last_used TEXT
 );
+CREATE TABLE IF NOT EXISTS recovery_codes(
+  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL, used_at TEXT
+);
 `);
+
+// additive migrations for databases created before a column existed
+const addCol = (table, col, def) => {
+  if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+};
+addCol('users', 'totp_secret', 'TEXT');
+addCol('users', 'totp_on', 'INTEGER NOT NULL DEFAULT 0');
+addCol('users', 'totp_step', 'INTEGER NOT NULL DEFAULT 0');
+addCol('sessions', 'stage', "TEXT NOT NULL DEFAULT 'ok'"); // ok · mfa (password done, code pending) · setup (must enrol 2FA)
+addCol('sessions', 'created_at', 'INTEGER');
+addCol('sessions', 'last_seen', 'INTEGER');
+addCol('sessions', 'tries', 'INTEGER NOT NULL DEFAULT 0');
 
 const cache = new Map();
 const stmt = (sql) => { let s = cache.get(sql); if (!s) { s = db.prepare(sql); cache.set(sql, s); } return s; };

@@ -17,7 +17,8 @@ export function notify(event, data, { subject, text } = {}) {
 
   const to = String(n.emails || '').split(/[,\s]+/).filter((e) => /@/.test(e));
   const smtp = S.smtp || {};
-  if (to.length && smtp.host && subject) {
+  // a user without a saved password means SMTP is not set up yet: skip rather than log a failure per request
+  if (to.length && smtp.host && subject && (!smtp.user || smtp.pass)) {
     const tx = nodemailer.createTransport({ host: smtp.host, port: Number(smtp.port) || 587, secure: !!smtp.secure,
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined, connectionTimeout: 8000, socketTimeout: 10000 });
     tx.sendMail({ from: smtp.from || smtp.user, to, subject, text: text || subject })
