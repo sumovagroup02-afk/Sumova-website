@@ -22,21 +22,28 @@
    (أو بالأمر: `npx wrangler r2 bucket lifecycle add sumova-data backups-30d backups/ --expire-days 30`)
 5. **R2 ← Manage API tokens ← Create API token**: صلاحية **Object Read & Write** على `sumova-data` فقط. احفظ:
    `Access Key ID` و`Secret Access Key` ورابط الـ endpoint (`https://<ACCOUNT_ID>.r2.cloudflarestorage.com`).
-6. **My Profile ← API Tokens ← Create Token** بقالب **Edit Cloudflare Workers** (للنشر من GitHub). احفظ الرمز ورقم الحساب (Account ID).
-7. **أوقف** في إعدادات النطاق: **Rocket Loader** و**Email Address Obfuscation** (Scrape Shield)، لأن رأس الأمان CSP يحجب السكربتات التي يحقنانها.
-8. **SSL/TLS ← Edge Certificates**: فعّل **Always Use HTTPS**.
+6. **أوقف** في إعدادات النطاق: **Rocket Loader** و**Email Address Obfuscation** (Scrape Shield)، لأن رأس الأمان CSP يحجب السكربتات التي يحقنانها.
+7. **SSL/TLS ← Edge Certificates**: فعّل **Always Use HTTPS**.
 
-## 2) GitHub
+## 2) GitHub + Workers Builds (النشر)
 
-1. أنشئ مستودعًا **خاصًا (Private)** وارفع محتوى الملف المضغوط إلى الفرع `main`.
-2. **Settings ← Secrets and variables ← Actions ← New repository secret**:
-   - `CLOUDFLARE_API_TOKEN` = رمز الخطوة 1-6
-   - `CLOUDFLARE_ACCOUNT_ID` = رقم الحساب
-3. كل دفع إلى `main` يشغّل الاختبارات كاملة ثم ينشر. إن فشل اختبار لا يُنشر شيء.
+1. أنشئ مستودعًا **خاصًا (Private)** وارفع محتوى الملف المضغوط إلى الفرع `main` (مع المجلد `.github`).
+2. في Cloudflare: **Workers & Pages ← Create ← Import a repository** ← اختر المستودع، أو في Worker موجود: **Settings ← Build ← Connect**. الإعدادات:
+
+   | الإعداد | القيمة |
+   |---|---|
+   | اسم الـ Worker | **`sumova-site`** (يجب أن يطابق `name` في `wrangler.jsonc`) |
+   | Production branch | `main` |
+   | Root directory | `/` |
+   | Build command | (فارغ) |
+   | Deploy command | `npx wrangler deploy` |
+
+3. كل دفع إلى `main` ينشر تلقائيًا: يُثبّت الحزم، ويبني صورة Docker، ويحدّث الحاوية.
+4. **الاختبارات** تعمل في GitHub ← **Actions** ← «Tests» مع كل دفع. Workers Builds لا ينتظرها، فتأكد أنها خضراء قبل الاعتماد على النسخة المنشورة.
 
 ## 3) أول نشر
 
-1. بعد نجاح أول تشغيل في **Actions**، افتح في Cloudflare: **Workers & Pages ← sumova-site ← Settings ← Variables and Secrets** وأضف كـ **Secret**:
+1. بعد نجاح أول بناء في **Workers & Pages ← sumova-site ← Deployments**، افتح: **Workers & Pages ← sumova-site ← Settings ← Variables and Secrets** وأضف كـ **Secret**:
 
    | الاسم | القيمة |
    |---|---|
@@ -47,7 +54,7 @@
    | `R2_SECRET_ACCESS_KEY` | من الخطوة 1-5 |
 
    قبل إضافتها يردّ الموقع «الموقع قيد الإعداد» ولا يشغّل الحاوية (حماية من فقد البيانات).
-2. أعد تشغيل آخر نشر من **Actions ← Run workflow** (أو ادفع أي تعديل).
+2. أعد النشر: **Deployments ← آخر بناء ← Retry build** (أو ادفع أي تعديل).
 3. افتح `https://sumova.org/admin`، سجّل الدخول، وفعّل **التحقق بخطوتين** (إلزامي للمالك)، واحفظ رموز الاسترداد خارج الجوال.
 4. بعد الدخول احذف السر `ADMIN_PASSWORD` من Cloudflare (لا يُستخدم إلا لإنشاء المالك الأول).
 
@@ -118,5 +125,5 @@
 (حقل Google في «تحسين محركات البحث» يقبل أيضًا رمز `google-site-verification` إن اخترت التحقق بوسم HTML بدل DNS.)
 
 ## 9) قبل كل نشر
-- `npm test` ينجح كاملًا (يتم تلقائيًا في GitHub Actions).
+- `npm test` ينجح كاملًا (يعمل تلقائيًا في GitHub Actions ← Tests).
 - الأفضل النشر في وقت هادئ: أثناء النشر تتوقف الحاوية القديمة وتبدأ الجديدة خلال ثوانٍ.

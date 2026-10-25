@@ -1,0 +1,34 @@
+// SUMOVA on Cloudflare: Worker + one always-on Container (./Dockerfile) + R2 for persistence.
+// Deployed by Workers Builds (Git integration) from the repository root with `npx wrangler deploy`.
+// Secrets (Worker → Settings → Variables and Secrets): ADMIN_EMAIL, ADMIN_PASSWORD, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sumova-site",
+  "main": "cloudflare/src/index.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    { "pattern": "sumova.org", "custom_domain": true },
+    { "pattern": "www.sumova.org", "custom_domain": true }
+  ],
+  "containers": [
+    {
+      "class_name": "SumovaSite",
+      "image": "./Dockerfile",
+      "image_build_context": ".",
+      "instance_type": "basic",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "SITE", "class_name": "SumovaSite" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SumovaSite"] }],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "vars": {
+    "APEX": "sumova.org",
+    "SITE_URL": "https://sumova.org",
+    "R2_BUCKET": "sumova-data"
+  },
+  "observability": { "enabled": true }
+}

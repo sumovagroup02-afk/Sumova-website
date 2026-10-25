@@ -70,10 +70,14 @@ module.exports = async (S) => {
     eq(canonicalRedirect('http://www.sumova.org/'), 'https://sumova.org/');
     eq(canonicalRedirect('https://sumova.org/contact'), null);
   });
-  await test('wrangler config: one always-on basic container, both hostnames, cron keep-alive, no secrets in the file', async () => {
-    const raw = fs.readFileSync(path.resolve(__dirname, '../cloudflare/wrangler.jsonc'), 'utf8');
+  await test('wrangler config at the repo root (Workers Builds runs `npx wrangler deploy` there): one always-on basic container, both hostnames, cron, no secrets', async () => {
+    const raw = fs.readFileSync(path.resolve(__dirname, '../wrangler.jsonc'), 'utf8');
     const cfg = JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ''));
-    eq(cfg.containers[0].max_instances, 1); eq(cfg.containers[0].instance_type, 'basic'); eq(cfg.containers[0].image, '../Dockerfile');
+    assert(fs.existsSync(path.resolve(__dirname, '..', cfg.main)), 'main entry exists: ' + cfg.main);
+    assert(fs.existsSync(path.resolve(__dirname, '..', cfg.containers[0].image)), 'Dockerfile exists');
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'));
+    assert(pkg.devDependencies.wrangler && pkg.devDependencies['@cloudflare/containers'], 'wrangler + containers in root devDependencies');
+    eq(cfg.containers[0].max_instances, 1); eq(cfg.containers[0].instance_type, 'basic');
     eq(JSON.stringify(cfg.routes.map((r) => r.pattern)), JSON.stringify(['sumova.org', 'www.sumova.org']));
     eq(cfg.triggers.crons[0], '*/5 * * * *');
     assert(!/PASSWORD"\s*:|SECRET_ACCESS_KEY"\s*:|ACCESS_KEY_ID"\s*:/.test(raw), 'secret value in wrangler.jsonc');

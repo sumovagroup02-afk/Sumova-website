@@ -28,7 +28,7 @@ npm test            # اختبارات شاملة (HTTP + متصفح)  — تح�
 
 ## النشر
 - الاستضافة المعتمدة: **Cloudflare Containers** خلف Worker، والبيانات محفوظة في R2. الخطوات كاملة (الحساب، الأسرار، سجلات DNS، البريد، المراقبة، الاستعادة) في **[DEPLOY.md](DEPLOY.md)**.
-- النشر تلقائي من GitHub Actions بعد نجاح `npm test` (`.github/workflows/deploy.yml`).
+- النشر تلقائي من Cloudflare Workers Builds عند كل دفع إلى `main` (`npx wrangler deploy` من جذر المستودع، الإعداد في `wrangler.jsonc`). الاختبارات تعمل في GitHub Actions (`.github/workflows/deploy.yml`).
 - Docker محليًا: `docker build -t sumova . && docker run -d -p 3000:3000 -v sumova-data:/data -e ADMIN_PASSWORD=… sumova` (بدون `R2_*` يعمل كما هو على القرص).
 - النسخ الاحتياطي: `node ops/data.mjs backup | list | restore <date|latest> <dir>` (انظر DEPLOY.md).
 
