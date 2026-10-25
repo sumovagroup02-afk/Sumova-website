@@ -3,7 +3,8 @@
 // Secrets (Worker → Settings → Variables and Secrets): ADMIN_EMAIL, ADMIN_PASSWORD, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sumova-site",
+  // must match the Worker name in Cloudflare (Workers Builds checks it)
+  "name": "sumova",
   "main": "cloudflare/src/index.js",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],

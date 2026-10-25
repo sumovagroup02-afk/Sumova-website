@@ -32,7 +32,7 @@
 
    | الإعداد | القيمة |
    |---|---|
-   | اسم الـ Worker | **`sumova-site`** (يجب أن يطابق `name` في `wrangler.jsonc`) |
+   | اسم الـ Worker | **`sumova`** (يجب أن يطابق `name` في `wrangler.jsonc`) |
    | Production branch | `main` |
    | Root directory | `/` |
    | Build command | (فارغ) |
@@ -43,7 +43,7 @@
 
 ## 3) أول نشر
 
-1. بعد نجاح أول بناء في **Workers & Pages ← sumova-site ← Deployments**، افتح: **Workers & Pages ← sumova-site ← Settings ← Variables and Secrets** وأضف كـ **Secret**:
+1. بعد نجاح أول بناء في **Workers & Pages ← sumova ← Deployments**، افتح: **Workers & Pages ← sumova ← Settings ← Variables and Secrets** وأضف كـ **Secret**:
 
    | الاسم | القيمة |
    |---|---|
@@ -90,7 +90,7 @@
 ## 6) مراقبة التوقف
 
 - **تنبيه بالبريد (مجاني):** أنشئ حسابًا في [UptimeRobot](https://uptimerobot.com) ← **New monitor**: النوع HTTP(s)، الرابط `https://sumova.org/healthz`، كل **5 دقائق**، وجهة التنبيه `sumovagroup02@gmail.com`. مراقب خارجي ينبّه حتى لو تعطّل Cloudflare نفسه.
-- **سجلات Cloudflare:** فحص الـ Worker كل 5 دقائق يكتب `healthz failed` في **Workers ← sumova-site ← Logs** عند الفشل.
+- **سجلات Cloudflare:** فحص الـ Worker كل 5 دقائق يكتب `healthz failed` في **Workers ← sumova ← Logs** عند الفشل.
 
 ## 7) النسخ الاحتياطي والاستعادة
 
