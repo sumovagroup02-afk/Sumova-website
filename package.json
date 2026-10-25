@@ -1,0 +1,31 @@
+{
+  "name": "sumova-site",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node tests/run.cjs",
+    "start": "node server.js",
+    "seed": "node src/seed.js",
+    "test:http": "BROWSER=0 node tests/run.cjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-sans-arabic": "^5.3.0",
+    "@fontsource/jost": "^5.3.0",
+    "@fontsource/tajawal": "^5.3.0",
+    "express": "^4.22.3",
+    "multer": "^1.4.4",
+    "nodemailer": "^10.2.1",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "axe-core": "^4.14.0"
+  }
+}

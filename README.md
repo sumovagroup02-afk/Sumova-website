@@ -1,0 +1,37 @@
+# موقع سوموفا (SUMOVA) + لوحة التحكم
+
+موقع تعريفي وطلب عروض أسعار، مع لوحة تحكم كاملة (محتوى، صور، منتجات، SEO، طلبات، مستخدمون، API).
+
+## التشغيل
+
+```bash
+npm ci
+ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='كلمة-مرور-قوية-12+' npm start   # http://localhost:3000
+npm test            # اختبارات شاملة (HTTP + متصفح)  — تحتاج Playwright/Chromium
+```
+
+أول تشغيل ينشئ قاعدة البيانات والصفحات الأساسية والمستخدم المالك. إن لم تحدد `ADMIN_PASSWORD` تُكتب كلمة مرور عشوائية في `data/FIRST-LOGIN.txt` (احذف الملف بعد الدخول).
+لوحة التحكم: `/admin`.
+
+## المتغيرات
+
+| المتغير | الوظيفة |
+|---|---|
+| `PORT` | المنفذ (3000) |
+| `DATA_DIR` | مجلد البيانات: قاعدة SQLite والصور المرفوعة وملفات العملاء وعروض الأسعار. **احفظ نسخة احتياطية منه** |
+| `SITE_URL` | رابط الموقع النهائي (أو من لوحة التحكم ← تحسين محركات البحث) |
+| `COOKIE_SECURE=1` | فعّله خلف HTTPS (يضيف Secure وHSTS) |
+| `TRUST_PROXY=1` | فعّله خلف Nginx/Cloudflare ليُقرأ IP الزائر الحقيقي (للحد من الإساءة) |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | المالك الأول |
+
+## النشر
+- استضف الخادم **داخل المملكة** (البيانات الشخصية للعملاء: أسماء وجوالات). ضعه خلف Nginx/Cloudflare مع HTTPS.
+- Docker: `docker build -t sumova . && docker run -d -p 3000:3000 -v sumova-data:/data -e COOKIE_SECURE=1 -e TRUST_PROXY=1 -e ADMIN_PASSWORD=… sumova`
+- النسخ الاحتياطي: انسخ `DATA_DIR` كاملًا (أو استعمل `sqlite3 sumova.db ".backup"` + مجلد uploads/private).
+
+## الربط (n8n وغيره)
+- الإعدادات ← رابط Webhook: يصل حدث JSON موقّع (`x-sumova-signature` = HMAC-SHA256 للجسم) عند: `request.created` · `request.quoted` · `request.decision` · `request.status`.
+- مفاتيح API من لوحة التحكم ← الربط: `GET /api/v1/requests`, `GET /api/v1/requests/:code`, `PATCH /api/v1/requests/:code` (`Authorization: Bearer smv_…`).
+
+## الهيكل
+`src/blocks.js` يعرّف أقسام الصفحات (لوحة التحكم تبني نماذجها منه)، و`src/site/render.js` يعرضها. إضافة نوع قسم جديد = تعريفه في `blocks.js` + دالة عرض واحدة.
